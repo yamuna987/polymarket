@@ -9,8 +9,9 @@ import csv
 import time
 from datetime import datetime, timedelta
 
-# Polymarket Data API base URL
+# Polymarket API base URLs
 BASE_URL = "https://data-api.polymarket.com"
+GAMMA_API_URL = "https://gamma-api.polymarket.com"
 
 # Your wallet list
 WALLETS = [
@@ -148,16 +149,80 @@ def get_closed_positions_pnl(wallet_address):
 
 
 def get_profile_info(wallet_address):
-    """Try to get profile info from the profiles endpoint"""
-    url = f"{BASE_URL}/profiles/{wallet_address}"
+    """Get profile info from the gamma API including join date"""
+    url = f"{GAMMA_API_URL}/public-profile"
+    params = {"address": wallet_address}
 
     try:
-        response = requests.get(url, timeout=30)
+        response = requests.get(url, params=params, timeout=30)
         if response.status_code == 200:
-            return response.json()
-    except:
-        pass
+            data = response.json()
+            return {
+                "created_at": data.get("createdAt"),
+                "name": data.get("name"),
+                "pseudonym": data.get("pseudonym"),
+                "verified": data.get("verifiedBadge", False)
+            }
+    except Exception as e:
+        print(f"Error fetching profile for {wallet_address}: {e}")
     return None
+
+
+def get_total_markets_traded(wallet_address):
+    """Get total number of markets a user has traded"""
+    url = f"{BASE_URL}/traded"
+    params = {"user": wallet_address}
+
+    try:
+        response = requests.get(url, params=params, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("traded", 0)
+    except Exception as e:
+        print(f"Error fetching traded markets for {wallet_address}: {e}")
+        return 0
+
+
+def calculate_pnl_for_period(wallet_address, start_timestamp, end_timestamp):
+    """Calculate realized P&L for a specific time period using closed positions"""
+    url = f"{BASE_URL}/closed-positions"
+    params = {
+        "user": wallet_address,
+        "limit": 1000  # Get all closed positions
+    }
+
+    try:
+        response = requests.get(url, params=params, timeout=30)
+        response.raise_for_status()
+        positions = response.json()
+
+        total_pnl = 0
+        for position in positions:
+            timestamp = position.get("timestamp", 0)
+            # Only count positions closed within the time period
+            if start_timestamp <= timestamp <= end_timestamp:
+                pnl = position.get("realizedPnl", 0) or 0
+                total_pnl += pnl
+
+        return total_pnl
+    except Exception as e:
+        print(f"Error calculating P&L for period: {e}")
+        return 0
+
+
+def get_time_period_pnl(wallet_address):
+    """Get P&L for different time periods (1D, 1W, 1M, All time)"""
+    now = int(time.time())
+    one_day = 24 * 60 * 60
+    one_week = 7 * one_day
+    one_month = 30 * one_day
+
+    return {
+        "pnl_1d": calculate_pnl_for_period(wallet_address, now - one_day, now),
+        "pnl_1w": calculate_pnl_for_period(wallet_address, now - one_week, now),
+        "pnl_1m": calculate_pnl_for_period(wallet_address, now - one_month, now),
+        "pnl_all": calculate_pnl_for_period(wallet_address, 0, now)
+    }
 
 
 def fetch_all_wallets():
@@ -171,11 +236,21 @@ def fetch_all_wallets():
 
         print(f"[{i+1}/{len(WALLETS)}] Fetching data for {username}...")
 
+        # Get profile info (join date)
+        profile_data = get_profile_info(wallet)
+
+        # Get total markets traded
+        total_traded = get_total_markets_traded(wallet)
+
         # Get open positions P&L
         positions_data = get_positions_pnl(wallet)
 
         # Get closed positions P&L
         closed_data = get_closed_positions_pnl(wallet)
+
+        # Get time-period P&L
+        print(f"  → Calculating time-period P&L...")
+        period_pnl = get_time_period_pnl(wallet)
 
         result = {
             "category": category,
@@ -183,6 +258,23 @@ def fetch_all_wallets():
             "wallet": wallet,
             "profile_url": f"https://polymarket.com/profile/{wallet}",
         }
+
+        # Add profile info
+        if profile_data:
+            result.update({
+                "joined_date": profile_data.get("created_at", "N/A"),
+                "display_name": profile_data.get("name") or profile_data.get("pseudonym", "N/A"),
+                "verified": profile_data.get("verified", False)
+            })
+        else:
+            result.update({
+                "joined_date": "N/A",
+                "display_name": "N/A",
+                "verified": False
+            })
+
+        # Add total predictions (markets traded)
+        result["total_predictions"] = total_traded
 
         if positions_data:
             result.update({
@@ -215,10 +307,18 @@ def fetch_all_wallets():
         # Calculate total P&L
         result["total_pnl"] = round(result["open_cash_pnl"] + result["closed_pnl"], 2)
 
+        # Add time-period P&L
+        result.update({
+            "pnl_1d": round(period_pnl["pnl_1d"], 2),
+            "pnl_1w": round(period_pnl["pnl_1w"], 2),
+            "pnl_1m": round(period_pnl["pnl_1m"], 2),
+            "pnl_all_time": round(period_pnl["pnl_all"], 2)
+        })
+
         results.append(result)
 
         # Rate limiting - be nice to the API
-        time.sleep(0.5)
+        time.sleep(1)  # Increased to 1 second due to more API calls
 
     return results
 
@@ -230,10 +330,12 @@ def save_to_csv(results, filename):
         return
 
     fieldnames = [
-        "category", "username", "wallet", "profile_url",
+        "category", "username", "display_name", "wallet", "profile_url",
+        "joined_date", "verified", "total_predictions",
         "open_positions", "open_cash_pnl", "open_realized_pnl",
         "open_initial_value", "open_current_value",
-        "closed_positions", "closed_pnl", "total_pnl"
+        "closed_positions", "closed_pnl", "total_pnl",
+        "pnl_1d", "pnl_1w", "pnl_1m", "pnl_all_time"
     ]
 
     with open(filename, 'w', newline='') as f:
