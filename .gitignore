@@ -36,5 +36,5 @@ env/
 *~
 
 # Results
-*.csv
+# *.csv (commented out to allow polymarket_pnl_results.csv in repo)
 *.json
