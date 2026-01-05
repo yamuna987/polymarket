@@ -21,6 +21,7 @@ from src.api.polymarket_client import PolymarketAPIClient
 from src.api.cache import APICache
 from src.websocket.listener import PolymarketWebSocketListener
 from src.filters.pipeline import create_filter_pipeline
+from src.signals.pipeline import create_signal_pipeline
 
 
 class SignalDetector:
@@ -68,6 +69,9 @@ class SignalDetector:
         # Initialize filter pipeline
         self.filter_pipeline = create_filter_pipeline(self.config, self.api_client)
 
+        # Initialize signal pipeline
+        self.signal_pipeline = create_signal_pipeline(self.config, self.api_client)
+
         # Initialize WebSocket listener
         self.ws_listener = None
 
@@ -111,21 +115,26 @@ class SignalDetector:
 
             self.stats["trades_passed_filters"] += 1
 
-            # TODO: Phase 3 - Detect signals
-            # - Fresh wallet
-            # - Size anomaly
-            # - Timing
-            # - Odds movement
-            # - Contrarian
-            # - Cluster
+            # Phase 3: Detect signals
+            signals = self.signal_pipeline.process_trade(enriched_trade)
 
-            # TODO: Phase 4 - Enrich and alert
-            # - Fetch user profile
-            # - Calculate win rate
-            # - Send to Discord
+            if signals:
+                self.stats["signals_detected"] += len(signals)
 
-            # For now, just log trades that passed filters
-            self.logger.info(f"✓ Trade passed all filters!")
+                # Get combined confidence
+                combined_confidence = self.signal_pipeline.get_combined_confidence(signals)
+
+                self.logger.info(
+                    f"🎯 {len(signals)} signal(s) detected with combined confidence: {combined_confidence:.2f}"
+                )
+
+                # TODO: Phase 4 - Enrich and alert
+                # - Fetch user profile (if not already in enriched_trade)
+                # - Calculate win rate
+                # - Send to Discord
+
+            else:
+                self.logger.info(f"✓ Trade passed filters but no signals detected")
 
         except Exception as e:
             self.logger.error(f"Error processing trade: {e}")
@@ -175,6 +184,7 @@ class SignalDetector:
                 ws_stats = self.ws_listener.get_stats() if self.ws_listener else {}
                 cache_stats = self.cache.get_stats()
                 filter_stats = self.filter_pipeline.get_stats()
+                signal_stats = self.signal_pipeline.get_stats()
 
                 self.logger.info("=" * 60)
                 self.logger.info("STATISTICS")
@@ -185,6 +195,7 @@ class SignalDetector:
                 self.logger.info(f"Trades Passed Filters: {self.stats['trades_passed_filters']}")
                 self.logger.info(f"Filter Pass Rate: {filter_stats.get('pass_rate_pct', 0):.1f}%")
                 self.logger.info(f"Signals Detected: {self.stats['signals_detected']}")
+                self.logger.info(f"Multi-Signal Trades: {signal_stats.get('multi_signal_trades', 0)}")
                 self.logger.info(f"Alerts Sent: {self.stats['alerts_sent']}")
                 self.logger.info(f"API Errors: {self.stats['api_errors']}")
                 self.logger.info(f"WebSocket Messages: {ws_stats.get('messages_received', 0)}")
