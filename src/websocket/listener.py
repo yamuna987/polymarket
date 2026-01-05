@@ -70,12 +70,13 @@ class PolymarketWebSocketListener:
         """Subscribe to the market channel"""
         try:
             subscribe_message = {
-                "type": "subscribe",
-                "channel": "market"
+                "type": "MARKET",
+                "assets_ids": [],  # Empty array subscribes to all markets
+                "custom_feature_enabled": True
             }
 
             await self.websocket.send(json.dumps(subscribe_message))
-            logger.info("Subscribed to market channel")
+            logger.info("Subscribed to market channel (all markets)")
 
         except Exception as e:
             logger.error(f"Failed to subscribe to market channel: {e}")
