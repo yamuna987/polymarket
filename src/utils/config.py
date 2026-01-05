@@ -83,7 +83,7 @@ def _validate_config(config: Dict[str, Any]):
     Raises:
         ValueError: If configuration is invalid
     """
-    required_sections = ["filters", "signal_detection", "discord", "api", "database"]
+    required_sections = ["filters", "signal_detection", "telegram", "api", "database"]
 
     for section in required_sections:
         if section not in config:
