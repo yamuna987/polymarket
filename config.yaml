@@ -1,0 +1,100 @@
+# Polymarket Signal Detector Configuration
+
+filters:
+  # Market categories to exclude (e.g., sports, crypto)
+  excluded_categories:
+    - sports
+    - crypto
+
+  # Only track markets ending within this many days
+  market_timeframe_days: 30
+
+  # Minimum trade size in USD to process
+  min_trade_size_usd: 2000
+
+signal_detection:
+  # Consider wallet "fresh" if created within this many days
+  fresh_wallet_days: 30
+
+  # Size anomaly: flag if trade is X times larger than user's average
+  size_anomaly_multiplier: 2.0
+
+  # Flag trades within X minutes of market creation
+  timing_minutes_after_creation: 60
+
+  # Flag if odds moved more than X% in last hour
+  odds_movement_threshold_pct: 5.0
+
+  # Flag contrarian trades against X% consensus
+  contrarian_consensus_threshold: 0.80
+
+  # Minimum wallets needed to detect cluster
+  cluster_min_wallets: 3
+
+  # Time window for cluster detection (seconds)
+  cluster_time_window: 300
+
+discord:
+  # Rate limit: messages per second
+  rate_limit_per_second: 1
+
+  # Discord webhook URL (set via environment variable)
+  webhook_url: ${DISCORD_WEBHOOK_URL}
+
+  # Enable/disable Discord alerts
+  enabled: true
+
+api:
+  # Polymarket API endpoints
+  clob_url: "https://clob.polymarket.com"
+  gamma_url: "https://gamma-api.polymarket.com"
+  data_url: "https://data-api.polymarket.com"
+  websocket_url: "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+
+  # API request timeout (seconds)
+  request_timeout: 30
+
+  # Retry settings
+  max_retries: 3
+  retry_delay: 2
+
+database:
+  # Database type: sqlite or postgresql
+  type: "sqlite"
+
+  # SQLite database file
+  sqlite_path: "database/signals.db"
+
+  # PostgreSQL connection (if using PostgreSQL)
+  # postgres_url: "postgresql://user:password@localhost:5432/polymarket"
+
+cache:
+  # Cache trader profiles for X seconds
+  profile_ttl: 3600
+
+  # Cache market metadata for X seconds
+  market_ttl: 1800
+
+logging:
+  # Log level: DEBUG, INFO, WARNING, ERROR
+  level: "INFO"
+
+  # Log file path
+  file: "logs/signal_detector.log"
+
+  # Console logging
+  console: true
+
+  # Log format
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+monitoring:
+  # Print stats every X seconds
+  stats_interval: 60
+
+  # Metrics to track
+  track_metrics:
+    - trades_processed
+    - signals_detected
+    - alerts_sent
+    - api_errors
