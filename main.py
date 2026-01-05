@@ -22,6 +22,7 @@ from src.api.cache import APICache
 from src.websocket.listener import PolymarketWebSocketListener
 from src.filters.pipeline import create_filter_pipeline
 from src.signals.pipeline import create_signal_pipeline
+from src.telegram.alert_sender import TelegramAlertSender, format_telegram_alert
 
 
 class SignalDetector:
@@ -71,6 +72,17 @@ class SignalDetector:
 
         # Initialize signal pipeline
         self.signal_pipeline = create_signal_pipeline(self.config, self.api_client)
+
+        # Initialize Telegram alert sender
+        telegram_config = self.config.get("telegram", {})
+        self.telegram_sender = None
+        if telegram_config.get("enabled", False):
+            self.telegram_sender = TelegramAlertSender(
+                bot_token=telegram_config.get("bot_token"),
+                chat_id=telegram_config.get("chat_id"),
+                rate_limit_per_second=telegram_config.get("rate_limit_per_second", 1.0)
+            )
+            self.logger.info("Telegram alert sender initialized")
 
         # Initialize WebSocket listener
         self.ws_listener = None
@@ -128,10 +140,8 @@ class SignalDetector:
                     f"🎯 {len(signals)} signal(s) detected with combined confidence: {combined_confidence:.2f}"
                 )
 
-                # TODO: Phase 4 - Enrich and alert
-                # - Fetch user profile (if not already in enriched_trade)
-                # - Calculate win rate
-                # - Send to Discord
+                # Phase 4: Send Telegram alert
+                await self._send_alert(enriched_trade, signals, combined_confidence)
 
             else:
                 self.logger.info(f"✓ Trade passed filters but no signals detected")
@@ -140,9 +150,72 @@ class SignalDetector:
             self.logger.error(f"Error processing trade: {e}")
             self.stats["api_errors"] += 1
 
+    async def _send_alert(self, trade: dict, signals: list, combined_confidence: float):
+        """
+        Enrich trade data and send Telegram alert
+
+        Args:
+            trade: Enriched trade data
+            signals: List of detected signals
+            combined_confidence: Combined confidence score
+        """
+        if not self.telegram_sender:
+            self.logger.debug("Telegram sender not configured, skipping alert")
+            return
+
+        try:
+            # Fetch trader stats if not already in enriched trade
+            trader_stats = None
+            trader_wallet = trade.get("trader_wallet")
+
+            if trader_wallet and "trader_profile" in trade:
+                # Calculate win rate from profile
+                profile = trade["trader_profile"]
+                positions = self.api_client.get_positions(trader_wallet, limit=100)
+
+                if positions:
+                    win_rate = self.api_client.calculate_win_rate(positions)
+
+                    # Calculate total P&L
+                    total_pnl = sum(
+                        float(pos.get("position_value", 0)) - float(pos.get("cost_basis", 0))
+                        for pos in positions
+                    )
+
+                    trader_stats = {
+                        "win_rate": win_rate,
+                        "total_pnl": total_pnl,
+                        "total_markets_traded": len(set(pos.get("market_id") for pos in positions))
+                    }
+
+            # Format alert message
+            message = format_telegram_alert(
+                trade=trade,
+                signals=signals,
+                combined_confidence=combined_confidence,
+                trader_stats=trader_stats
+            )
+
+            # Queue alert
+            success = self.telegram_sender.enqueue_alert(message)
+
+            if success:
+                self.stats["alerts_sent"] += 1
+                self.logger.info("✓ Alert queued for Telegram")
+            else:
+                self.logger.warning("Alert queue full, alert dropped")
+
+        except Exception as e:
+            self.logger.error(f"Error sending Telegram alert: {e}")
+
     async def start(self):
         """Start the signal detector"""
         self.running = True
+
+        # Start Telegram sender
+        if self.telegram_sender:
+            await self.telegram_sender.start()
+            self.logger.info("Telegram alert sender started")
 
         self.logger.info("Initializing WebSocket listener...")
 
@@ -185,6 +258,7 @@ class SignalDetector:
                 cache_stats = self.cache.get_stats()
                 filter_stats = self.filter_pipeline.get_stats()
                 signal_stats = self.signal_pipeline.get_stats()
+                telegram_stats = self.telegram_sender.get_stats() if self.telegram_sender else {}
 
                 self.logger.info("=" * 60)
                 self.logger.info("STATISTICS")
@@ -204,6 +278,12 @@ class SignalDetector:
                     f"Cache Hit Rate: {cache_stats.get('hit_rate_pct', 0):.1f}% "
                     f"({cache_stats.get('hits', 0)}/{cache_stats.get('total_requests', 0)})"
                 )
+                if telegram_stats:
+                    self.logger.info(
+                        f"Telegram: {telegram_stats.get('messages_sent', 0)} sent, "
+                        f"{telegram_stats.get('messages_failed', 0)} failed, "
+                        f"{telegram_stats.get('queue_size', 0)} queued"
+                    )
                 self.logger.info("=" * 60)
 
             except asyncio.CancelledError:
@@ -215,6 +295,11 @@ class SignalDetector:
         """Cleanup and shutdown"""
         self.logger.info("Shutting down...")
         self.running = False
+
+        # Stop Telegram sender
+        if self.telegram_sender:
+            await self.telegram_sender.stop()
+            self.logger.info("Telegram alert sender stopped")
 
         # Stop WebSocket
         if self.ws_listener:

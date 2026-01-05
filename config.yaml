@@ -34,14 +34,17 @@ signal_detection:
   # Time window for cluster detection (seconds)
   cluster_time_window: 300
 
-discord:
+telegram:
   # Rate limit: messages per second
   rate_limit_per_second: 1
 
-  # Discord webhook URL (set via environment variable)
-  webhook_url: ${DISCORD_WEBHOOK_URL}
+  # Telegram bot token (set via environment variable)
+  bot_token: ${TELEGRAM_BOT_TOKEN}
 
-  # Enable/disable Discord alerts
+  # Telegram chat ID (set via environment variable)
+  chat_id: ${TELEGRAM_CHAT_ID}
+
+  # Enable/disable Telegram alerts
   enabled: true
 
 api:
